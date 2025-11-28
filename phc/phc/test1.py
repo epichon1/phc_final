@@ -13,11 +13,15 @@ from math               import pi, sin, cos, acos, atan2, sqrt, fmod, exp
 
 from asyncio            import Future
 from rclpy.node         import Node
-from geometry_msgs.msg  import PoseStamped, TwistStamped
+from rclpy.qos                  import QoSProfile, DurabilityPolicy
+from geometry_msgs.msg  import PoseStamped, TwistStamped, Point, Vector3, Quaternion
 from geometry_msgs.msg  import TransformStamped
 from sensor_msgs.msg    import JointState
 from std_msgs.msg       import Header
 from std_msgs.msg import Float64
+from std_msgs.msg               import ColorRGBA
+from visualization_msgs.msg     import Marker
+from visualization_msgs.msg     import MarkerArray
 from hw7code.repulsion import repulsion
 
 # Grab the Utilities
@@ -59,7 +63,9 @@ class TrajectoryNode(Node):
         self.q0 = np.radians(np.array([0, 90,0, -90, 0, 0, 0]))
         self.qcenter = np.array([-pi/4,-pi/4, pi/2, -pi/2, 0, 0,0])
         self.p0= np.array([0.0, 0.55, 1.0])
+        self.pos = self.p0.copy()
         self.R0 = Reye()
+        self.ball_c_pos = np.array([0,0,0])
 
         # Define the other points.
         self.pleft  = np.array([0.3, 0.5, 0.15])
@@ -76,9 +82,6 @@ class TrajectoryNode(Node):
         self.lam = 20
         self.lam2 = 0.5
         self.gamma = 0.1
-        # FIXME: WHAT DO YOU NEED TO DO TO INITIALIZE THE TRAJECTORY?
-
-        # FIXME: REUSE THE PREVIOUS INVERSE KINEMATICS INITIALIZATION.
 
 
         ##############################################################
@@ -90,6 +93,11 @@ class TrajectoryNode(Node):
         self.pubtwist = self.create_publisher(TwistStamped, '/twist', 10)
         self.pubcond = self.create_publisher(Float64, '/condition', 10)
         self.tfbroad  = tf2_ros.TransformBroadcaster(self)
+
+        quality = QoSProfile(
+            durability=DurabilityPolicy.TRANSIENT_LOCAL, depth=1)
+
+        self.subball = self.create_subscription(MarkerArray, '/visualization_marker_array',self.ball_tracking, quality)
 
         # Wait for a connection to happen.  This isn't necessary, but
         # means we don't start until the rest of the system is ready.
@@ -121,55 +129,15 @@ class TrajectoryNode(Node):
 
         ##############################################################
         # COMPUTE THE TRAJECTORY AT THIS TIME INSTANCE.
-        if self.t > 8.0:
-            self.future.set_result("Trajectory has ended")
-            return
         #FIXME: IMPLEMENT THE TRAJECTORY.
-        if self.t < 3.0:
-            # Approach movement:
-            (s0, s0dot) = goto(self.t, 3.0, 0.0, 1.0)
+        # Approach movement:
+        t = (self.t) % 5
+        (s0, s0dot) = goto(self.t, 3.0, 0.0, 1.0)
 
-            pd = self.p0 + (self.pright - self.p0) * s0
-            vd =           (self.pright - self.p0) * s0dot
-
-            Rd = Reye()
-            wd = np.zeros(3)
-
-        else:
-            # Pre-compute the path variables.  To show different
-            # options, we compute the position path variable using
-            # sinusoids and the orientation variable via splines.
-            t = (self.t - 3.0) % 5
-            if t < 2.5:
-                (sl, sldot) = goto(t, 2.5, 0.0, 1.0)
-                z = -0.15*np.cos((4*pi*t)/5)+0.3
-                zdot = 0.15*(0.8)*np.sin((4*pi*t)/5)
-                y = 0.5
-                x = self.pright[0] + (self.pleft[0]-self.pright[0]) * sl
-                xdot = (self.pleft[0]-self.pright[0]) * sldot
-                pd = np.array([x,y,z])
-                vd = np.array([xdot,0,zdot])
-
-                (alpha,alphadot) = goto(t, 2.5,0,pi/2)
-                (beta,betadot) = goto(t, 2.5,0,-pi/2)
-                Rd = Rotz(alpha) @ Rotx(beta)
-                wd = nz() * alphadot + Rotz(alpha) @ (nx() * betadot)
-            else:
-                (sr, srdot) = goto(t-2.5, 2.5, 0.0, 1.0)
-                z = -0.15*np.cos((4*pi*t)/5)+0.3
-                zdot = 0.15*(0.8)*np.sin((4*pi*t)/5)
-                y = 0.5
-                x = self.pleft[0] + (self.pright[0]-self.pleft[0]) * sr
-                xdot = (self.pleft[0]-self.pright[0]) * srdot
-                pd = np.array([x,y,z])
-                vd = np.array([xdot,0,zdot])
-
-                (alpha,alphadot) = goto(t-2.5, 2.5,pi/2,0)
-                (beta,betadot) = goto(t-2.5, 2.5,-pi/2,0)
-                Rd = Rotz(alpha) @ Rotx(beta)
-                wd = nz() * alphadot + Rotz(alpha) @ (nx() * betadot)
-
-        #FIXME: REUSE THE PREVIOUS INVERSE KINEMATICS UPDATE.
+        Rd = Reye()
+        wd = np.zeros(3)
+        pd,vd = goto(t, 2.0,self.pos,self.ball_c_pos)
+        
         qc = self.qlast.copy()
         elast = self.elast.copy()
         xdot = np.concatenate((vd, wd))
@@ -180,16 +148,18 @@ class TrajectoryNode(Node):
         Jbar = np.diag([1/l,1/l,1/l,1,1,1])@J
         condition = np.linalg.cond(Jbar)
 
-        u, s, vT = np.linalg.svd(J) 
-        Ji = np.linalg.pinv(J)
+
+        lam_damp = 0.01
+        Ji = J.T @ np.linalg.inv(J @ J.T + lam_damp*np.eye(6))
         tau = repulsion(self.qlast, self.elbowchain, self.wristchain)
-        qcdot = Ji @ (xdot + self.lam*elast) + (np.eye(7)-Ji@J) @ (5*tau)
+        qcdot = Ji @ (xdot + self.lam*elast) + (np.eye(7)-Ji@J) @ (0.5*tau)
         qc = qc + self.dt * qcdot
         
         errR = eR(Rd,Rc)
         errp = ep(pd, pc)
         self.elast = np.concatenate((errp, errR))
         self.qlast = qc.copy()
+        self.pos = pc.copy()
 
 
         ##############################################################
@@ -215,7 +185,10 @@ class TrajectoryNode(Node):
             child_frame_id='desired',
             transform=Transform_from_Rp(Rd,pd)))
 
-
+    def ball_tracking(self, msg):
+        pos = msg.markers[0].pose.position
+        self.ball_c_pos = np.array([pos.x,pos.y,pos.z])
+        return
 #
 #  Main Code
 #
