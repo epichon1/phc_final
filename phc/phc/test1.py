@@ -66,6 +66,7 @@ class TrajectoryNode(Node):
         self.pos = self.p0.copy()
         self.R0 = Reye()
         self.ball_c_pos = np.array([0,0,0])
+        #self.pos_wrist = self.wristchain.fkin(self.q0)
 
         # Define the other points.
         self.pleft  = np.array([0.3, 0.5, 0.15])
@@ -77,6 +78,7 @@ class TrajectoryNode(Node):
 
         self.qlast = self.q0.copy()
         self.elast = np.zeros(6)
+        self.ewlast = np.zeros(6)
 
         # Pick the convergence bandwidth.
         self.lam = 20
@@ -131,15 +133,33 @@ class TrajectoryNode(Node):
         # COMPUTE THE TRAJECTORY AT THIS TIME INSTANCE.
         #FIXME: IMPLEMENT THE TRAJECTORY.
         # Approach movement:
+        qc = self.qlast.copy()
+        elast = self.elast.copy()
+        ewlast = self.ewlast.copy()
+
         t = (self.t) % 5
         (s0, s0dot) = goto(self.t, 3.0, 0.0, 1.0)
 
         Rd = Reye()
         wd = np.zeros(3)
         pd,vd = goto(t, 2.0,self.pos,self.ball_c_pos)
+
+        (pc_wrist, Rc_wrist, Jv_wrist, Jw_wrist) = self.wristchain.fkin(qc[0:5])
+        J_wrist = np.vstack((Jv_wrist, Jw_wrist)) 
         
-        qc = self.qlast.copy()
-        elast = self.elast.copy()
+        ball_vec = self.ball_c_pos - pc_wrist
+        if np.linalg.norm(ball_vec) > 1e-6:
+            d = ball_vec / np.linalg.norm(ball_vec)
+        else:
+            d = Rc_wrist[:,1]
+
+        y_axis = Rc_wrist[:,1]
+        errR_wrist = np.cross(y_axis, d)
+        errp_wrist = np.zeros(3)
+        vd_wrist = np.zeros(3)
+        wd_wrist = self.lam2 * errR_wrist
+        xdot_wrist = np.concatenate((vd_wrist, wd_wrist))
+        
         xdot = np.concatenate((vd, wd))
 
         (pc,Rc,Jv,Jw) = self.chain.fkin(qc)
@@ -150,14 +170,19 @@ class TrajectoryNode(Node):
 
 
         lam_damp = 0.01
+        Ji_wrist = J_wrist.T @ np.linalg.inv(J_wrist @ J_wrist.T + (lam_damp**2)*np.eye(6))
         Ji = J.T @ np.linalg.inv(J @ J.T + lam_damp*np.eye(6))
-        tau = repulsion(self.qlast, self.elbowchain, self.wristchain)
-        qcdot = Ji @ (xdot + self.lam*elast) + (np.eye(7)-Ji@J) @ (0.5*tau)
+        #qcdot = Ji @ (xdot + self.lam*elast) + (np.eye(7)-Ji@J) @ (self.lam2*(qc - self.qcenter))
+        qcdot = Ji_wrist @ (xdot + self.lam*ewlast)
+        print(qcdot)
+        temp = np.zeros(2)
+        qcdot = np.concatenate((qcdot, temp))
         qc = qc + self.dt * qcdot
         
         errR = eR(Rd,Rc)
         errp = ep(pd, pc)
         self.elast = np.concatenate((errp, errR))
+        self.ewlast = np.concatenate((errp_wrist, errR_wrist))
         self.qlast = qc.copy()
         self.pos = pc.copy()
 
