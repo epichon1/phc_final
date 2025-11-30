@@ -138,14 +138,19 @@ class TrajectoryNode(Node):
         ewlast = self.ewlast.copy()
 
         t = (self.t) % 5
-        (s0, s0dot) = goto(self.t, 3.0, 0.0, 1.0)
 
         Rd = Reye()
         wd = np.zeros(3)
-        pd,vd = goto(t, 2.0,self.pos,self.ball_c_pos)
+        for i in range(len(self.pos)):
+            if abs(self.pos[i]-self.ball_c_pos[i]) < 1e-3:
+                self.pos[i] = self.ball_c_pos[i]
+            
+        pd,vd = goto(t, 5.0,self.pos,self.ball_c_pos)
 
         (pc_wrist, Rc_wrist, Jv_wrist, Jw_wrist) = self.wristchain.fkin(qc[0:5])
-        J_wrist = np.vstack((Jv_wrist, Jw_wrist)) 
+        J_wrist = np.vstack((Jv_wrist, Jw_wrist))
+        J_wrist = np.hstack((J_wrist, np.zeros((6, 2))))
+
         
         ball_vec = self.ball_c_pos - pc_wrist
         if np.linalg.norm(ball_vec) > 1e-6:
@@ -171,14 +176,12 @@ class TrajectoryNode(Node):
 
         lam_damp = 0.01
         Ji_wrist = J_wrist.T @ np.linalg.inv(J_wrist @ J_wrist.T + (lam_damp**2)*np.eye(6))
-        Ji = J.T @ np.linalg.inv(J @ J.T + lam_damp*np.eye(6))
-        #qcdot = Ji @ (xdot + self.lam*elast) + (np.eye(7)-Ji@J) @ (self.lam2*(qc - self.qcenter))
-        qcdot = Ji_wrist @ (xdot + self.lam*ewlast)
-        print(qcdot)
-        temp = np.zeros(2)
-        qcdot = np.concatenate((qcdot, temp))
+        Ji = J.T @ np.linalg.inv(J @ J.T + (lam_damp)*np.eye(6))
+        qcdot = Ji @ (xdot + self.lam*elast) + (np.eye(7) - Ji @ J) @ Ji_wrist @ (xdot_wrist + self.lam*ewlast)
+        #(np.eye(7)-Ji@J) @ (self.lam2*(qc - self.qcenter))
+        #qcdot = Ji_wrist @ (xdot_wrist + self.lam*ewlast) + (np.eye(7) - Ji_wrist @ J_wrist) @ Ji @ (xdot + self.lam*elast)
         qc = qc + self.dt * qcdot
-        
+
         errR = eR(Rd,Rc)
         errp = ep(pd, pc)
         self.elast = np.concatenate((errp, errR))
