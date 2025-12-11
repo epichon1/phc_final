@@ -32,7 +32,8 @@ setup(
     entry_points={
         'console_scripts': [
             'test1      = phc.test1:main',
-            'balldemo   = phc.balldemo:main'
+            'balldemo   = phc.balldemo:main',
+            'ballsdemo   = phc.ballsdemo:main'
         ],
     },
 )

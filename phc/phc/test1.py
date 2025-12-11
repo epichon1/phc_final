@@ -174,16 +174,24 @@ class TrajectoryNode(Node):
         condition = np.linalg.cond(Jbar)
 
 
-        lam_damp = 0.01
-        Ji_wrist = J_wrist.T @ np.linalg.inv(J_wrist @ J_wrist.T + (lam_damp**2)*np.eye(6))
+        sigma = np.linalg.svd(J, compute_uv=False)
+        minsv = min(sigma)
+
+        lam_damp = 0.01 + 0.2 * np.exp(-5 * minsv)
+        Ji_wrist = J_wrist.T @ np.linalg.inv(J_wrist @ J_wrist.T + (lam_damp)*np.eye(6))
         Ji = J.T @ np.linalg.inv(J @ J.T + (lam_damp)*np.eye(6))
         qcdot = Ji @ (xdot + self.lam*elast) + (np.eye(7) - Ji @ J) @ Ji_wrist @ (xdot_wrist + self.lam*ewlast)
         #(np.eye(7)-Ji@J) @ (self.lam2*(qc - self.qcenter))
         #qcdot = Ji_wrist @ (xdot_wrist + self.lam*ewlast) + (np.eye(7) - Ji_wrist @ J_wrist) @ Ji @ (xdot + self.lam*elast)
-        qc = qc + self.dt * qcdot
 
         errR = eR(Rd,Rc)
         errp = ep(pd, pc)
+
+        # errp = np.clip(errp, -MAX_ERR, MAX_ERR)
+        # errR = np.clip(errR, -MAX_ERR, MAX_ERR)
+
+        qc = qc + self.dt * qcdot
+
         self.elast = np.concatenate((errp, errR))
         self.ewlast = np.concatenate((errp_wrist, errR_wrist))
         self.qlast = qc.copy()
