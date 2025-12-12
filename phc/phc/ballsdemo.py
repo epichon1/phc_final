@@ -39,7 +39,7 @@ class DemoNode(Node):
 
         # Initialize the ball position, velocity, set the acceleration.
         self.radius = 0.1
-        self.ballsnum = 5
+        self.ballsnum = 2
 
         # list of vectors (one for each ball) instead of singular (for just one ball)
         self.p = []
