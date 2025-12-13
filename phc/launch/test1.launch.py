@@ -70,9 +70,9 @@ def generate_launch_description():
 
 
     node_ball = Node(
-        name       = 'balldemo',
+        name       = 'ballsdemo',
         package    = 'phc',
-        executable = 'balldemo',
+        executable = 'ballsdemo',
         output     = 'screen',
         on_exit    = Shutdown())
     ######################################################################
