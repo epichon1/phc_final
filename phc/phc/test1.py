@@ -65,7 +65,7 @@ class TrajectoryNode(Node):
         self.p0= np.array([0.0, 0.55, 1.0])
         self.pos = self.p0.copy()
         self.R0 = Reye()
-        self.ball_c_pos = np.array([0,0,0])
+        self.ball_c_pos = [np.array([0.0, 0.0, 0.0]), np.array([0.0, 0.0, 0.0])]
         #self.pos_wrist = self.wristchain.fkin(self.q0)
 
         # Define the other points.
@@ -142,17 +142,17 @@ class TrajectoryNode(Node):
         Rd = Reye()
         wd = np.zeros(3)
         for i in range(len(self.pos)):
-            if abs(self.pos[i]-self.ball_c_pos[i]) < 1e-3:
-                self.pos[i] = self.ball_c_pos[i]
+            if abs(self.pos[i]-self.ball_c_pos[0][i]) < 1e-3:
+                self.pos[i] = self.ball_c_pos[0][i]
             
-        pd,vd = goto(t, 5.0,self.pos,self.ball_c_pos)
+        pd,vd = goto(t, 5.0,self.pos,self.ball_c_pos[0])
 
         (pc_wrist, Rc_wrist, Jv_wrist, Jw_wrist) = self.wristchain.fkin(qc[0:5])
         J_wrist = np.vstack((Jv_wrist, Jw_wrist))
         J_wrist = np.hstack((J_wrist, np.zeros((6, 2))))
 
         
-        ball_vec = self.ball_c_pos - pc_wrist
+        ball_vec = self.ball_c_pos[1] - pc_wrist
         if np.linalg.norm(ball_vec) > 1e-6:
             d = ball_vec / np.linalg.norm(ball_vec)
         else:
@@ -222,8 +222,10 @@ class TrajectoryNode(Node):
             transform=Transform_from_Rp(Rd,pd)))
 
     def ball_tracking(self, msg):
-        pos = msg.markers[0].pose.position
-        self.ball_c_pos = np.array([pos.x,pos.y,pos.z])
+        self.ball_c_pos = []
+        for marker in msg.markers:
+            pos = marker.pose.position
+            self.ball_c_pos.append(np.array([pos.x,pos.y,pos.z]))
         return
 #
 #  Main Code
